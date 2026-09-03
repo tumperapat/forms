@@ -1,0 +1,106 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  STAFF
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  name      String
+  email     String   @unique
+  password  String
+  role      Role
+  createdAt DateTime @default(now())
+
+  formsCreated Form[]         @relation("FormCreatedBy")
+  responses    FormResponse[] @relation("ResponseSubmittedBy")
+}
+
+enum FieldType {
+  TEXT
+  LONG_TEXT
+  NUMBER
+  CHECKBOX
+  DROPDOWN
+  DATE
+  SECTION
+}
+
+model Form {
+  id          Int      @id @default(autoincrement())
+  title       String
+  description String?
+  createdById Int
+  createdBy   User     @relation("FormCreatedBy", fields: [createdById], references: [id])
+  published   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  fields         FormField[]
+  responses      FormResponse[]
+  sheetConnection SheetConnection?
+}
+
+// Free-form canvas position/size in addition to field content, so the builder
+// can place fields anywhere rather than a fixed vertical list.
+model FormField {
+  id       Int       @id @default(autoincrement())
+  formId   Int
+  form     Form      @relation(fields: [formId], references: [id], onDelete: Cascade)
+  type     FieldType
+  label    String
+  required Boolean   @default(false)
+  options  String? // JSON-encoded string[] for DROPDOWN/CHECKBOX choices
+  x        Float
+  y        Float
+  width    Float
+  height   Float
+  zIndex   Int       @default(0)
+
+  values FormResponseValue[]
+}
+
+model FormResponse {
+  id            Int      @id @default(autoincrement())
+  formId       Int
+  form         Form     @relation(fields: [formId], references: [id], onDelete: Cascade)
+  submittedById Int?
+  submittedBy   User?    @relation("ResponseSubmittedBy", fields: [submittedById], references: [id])
+  submittedAt   DateTime @default(now())
+
+  values FormResponseValue[]
+}
+
+model FormResponseValue {
+  id         Int          @id @default(autoincrement())
+  responseId Int
+  response   FormResponse @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  fieldId    Int
+  field      FormField    @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  value      String
+
+  @@unique([responseId, fieldId])
+}
+
+// One connected Google Sheet per form. Tokens are null until the admin
+// completes the OAuth flow (requires GOOGLE_CLIENT_ID/SECRET to be configured).
+model SheetConnection {
+  id            Int      @id @default(autoincrement())
+  formId        Int      @unique
+  form          Form     @relation(fields: [formId], references: [id], onDelete: Cascade)
+  spreadsheetId String?
+  sheetName     String   @default("Responses")
+  refreshToken  String?
+  syncOnSubmit  Boolean  @default(true)
+  connectedById Int?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
