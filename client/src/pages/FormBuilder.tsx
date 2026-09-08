@@ -11,6 +11,7 @@ interface EditField {
   label: string;
   required: boolean;
   options: string[];
+  page: number;
   x: number;
   y: number;
   width: number;
@@ -28,8 +29,9 @@ const FIELD_TYPES: { type: FieldType; label: string; w: number; h: number }[] = 
   { type: "SECTION", label: "Section label", w: 420, h: 40 },
 ];
 
-const CANVAS_WIDTH = 900;
-const CANVAS_MIN_HEIGHT = 700;
+// A4 at 96 CSS px/inch — each page is one printable sheet.
+const CANVAS_WIDTH = 794;
+const CANVAS_HEIGHT = 1123;
 
 let keyCounter = 0;
 function newKey() {
@@ -45,6 +47,7 @@ function fromServerField(f: FormDetail["fields"][number]): EditField {
     label: f.label,
     required: f.required,
     options: f.options ? (JSON.parse(f.options) as string[]) : [],
+    page: f.page,
     x: f.x,
     y: f.y,
     width: f.width,
@@ -53,12 +56,23 @@ function fromServerField(f: FormDetail["fields"][number]): EditField {
   };
 }
 
+function parsePageTitles(json: string): string[] {
+  try {
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed) && parsed.length ? parsed : ["Page 1"];
+  } catch {
+    return ["Page 1"];
+  }
+}
+
 export default function FormBuilder() {
   const { id } = useParams();
   const formId = Number(id);
 
   const [form, setForm] = useState<FormDetail | null>(null);
   const [fields, setFields] = useState<EditField[]>([]);
+  const [pageTitles, setPageTitles] = useState<string[]>(["Page 1"]);
+  const [activePage, setActivePage] = useState(0);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -82,11 +96,18 @@ export default function FormBuilder() {
       .then((f) => {
         setForm(f);
         setFields(f.fields.map(fromServerField));
+        setPageTitles(parsePageTitles(f.pageTitles));
       })
       .catch((e) => setError(e instanceof ApiError ? e.message : "Failed to load form"));
   }, [formId]);
 
+  const visibleFields = fields.filter((f) => f.page === activePage);
   const selected = fields.find((f) => f.key === selectedKey) ?? null;
+
+  function switchPage(index: number) {
+    setActivePage(index);
+    setSelectedKey(null);
+  }
 
   function updateField(key: string, patch: Partial<EditField>) {
     setFields((prev) => prev.map((f) => (f.key === key ? { ...f, ...patch } : f)));
@@ -96,7 +117,8 @@ export default function FormBuilder() {
   function addField(type: FieldType) {
     const meta = FIELD_TYPES.find((t) => t.type === type)!;
     const key = newKey();
-    const offset = (fields.length % 6) * 16;
+    const onPage = visibleFields.length;
+    const offset = (onPage % 6) * 16;
     setFields((prev) => [
       ...prev,
       {
@@ -105,11 +127,12 @@ export default function FormBuilder() {
         label: type === "SECTION" ? "Section title" : meta.label,
         required: false,
         options: type === "DROPDOWN" ? ["Option 1", "Option 2"] : [],
+        page: activePage,
         x: 40 + offset,
         y: 40 + offset,
         width: meta.w,
         height: meta.h,
-        zIndex: fields.length,
+        zIndex: onPage,
       },
     ]);
     setSelectedKey(key);
@@ -176,6 +199,7 @@ export default function FormBuilder() {
           label: f.label,
           required: f.required,
           options: f.type === "DROPDOWN" ? f.options : undefined,
+          page: f.page,
           x: f.x,
           y: f.y,
           width: f.width,
@@ -194,19 +218,52 @@ export default function FormBuilder() {
     }
   }
 
-  async function saveDetails(patch: { title?: string; description?: string; published?: boolean }) {
+  async function saveDetails(patch: { title?: string; description?: string; published?: boolean; pageTitles?: string[] }) {
     setError(null);
     try {
       const updated = await api.patch<FormDetail>(`/forms/${formId}`, patch);
       setForm((prev) => (prev ? { ...prev, ...updated } : prev));
+      if (patch.pageTitles) setPageTitles(patch.pageTitles);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to save");
+    }
+  }
+
+  function addPage() {
+    const next = [...pageTitles, `Page ${pageTitles.length + 1}`];
+    saveDetails({ pageTitles: next });
+    setActivePage(next.length - 1);
+    setSelectedKey(null);
+  }
+
+  function renamePage(index: number, title: string) {
+    if (!title.trim()) return;
+    const next = pageTitles.map((t, i) => (i === index ? title.trim() : t));
+    saveDetails({ pageTitles: next });
+  }
+
+  async function deletePage(index: number) {
+    setError(null);
+    try {
+      const updated = await api.delete<FormDetail>(`/forms/${formId}/pages/${index}`);
+      setForm(updated);
+      setFields(updated.fields.map(fromServerField));
+      setPageTitles(parsePageTitles(updated.pageTitles));
+      setActivePage((prev) => Math.min(prev, parsePageTitles(updated.pageTitles).length - 1));
+      setSelectedKey(null);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to delete page");
     }
   }
 
   if (!form) {
     return <p className="text-sm text-slate-400">{error || "Loading..."}</p>;
   }
+
+  const contentHeight = visibleFields.length ? Math.max(...visibleFields.map((f) => f.y + f.height)) + 40 : 0;
+  const overflowsPage = contentHeight > CANVAS_HEIGHT;
+  const canvasHeight = Math.max(CANVAS_HEIGHT, contentHeight);
+  const canDeletePage = pageTitles.length > 1 && visibleFields.length === 0;
 
   return (
     <div>
@@ -228,10 +285,7 @@ export default function FormBuilder() {
           />
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <Button
-            variant="secondary"
-            onClick={() => saveDetails({ published: !form.published })}
-          >
+          <Button variant="secondary" onClick={() => saveDetails({ published: !form.published })}>
             {form.published ? "Unpublish" : "Publish"}
           </Button>
           <Link to={`/forms/${formId}/responses`}>
@@ -244,6 +298,34 @@ export default function FormBuilder() {
       </div>
 
       {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
+
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        {pageTitles.map((title, i) => (
+          <PageTab
+            key={i}
+            title={title}
+            active={i === activePage}
+            onSelect={() => switchPage(i)}
+            onRename={(t) => renamePage(i, t)}
+          />
+        ))}
+        <button
+          onClick={addPage}
+          className="text-sm font-medium px-3 py-1.5 rounded-md text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-500/10"
+        >
+          + Add page
+        </button>
+        {pageTitles.length > 1 && (
+          <button
+            onClick={() => deletePage(activePage)}
+            disabled={!canDeletePage}
+            title={canDeletePage ? "Delete this page" : "Remove this page's fields first"}
+            className="text-sm font-medium px-3 py-1.5 rounded-md text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-40 disabled:hover:bg-transparent"
+          >
+            Delete page
+          </button>
+        )}
+      </div>
 
       <div className="flex gap-4 items-start">
         <Card className="p-3 w-40 shrink-0">
@@ -264,15 +346,22 @@ export default function FormBuilder() {
         <div
           ref={canvasRef}
           onPointerDown={() => setSelectedKey(null)}
-          className="relative bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-700 rounded-xl overflow-hidden shrink-0"
+          className="relative bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-sm shadow-sm shrink-0"
           style={{
             width: CANVAS_WIDTH,
-            minHeight: CANVAS_MIN_HEIGHT,
+            height: canvasHeight,
             backgroundImage: "radial-gradient(circle, rgba(148,163,184,0.35) 1px, transparent 1px)",
             backgroundSize: "20px 20px",
           }}
         >
-          {fields.map((f) => (
+          {overflowsPage && (
+            <div
+              className="absolute left-0 right-0 border-t border-dashed border-red-400"
+              style={{ top: CANVAS_HEIGHT }}
+              title="Content below this line won't fit on a printed A4 page"
+            />
+          )}
+          {visibleFields.map((f) => (
             <div
               key={f.key}
               onPointerDown={(e) => startDrag(e, f.key, "move")}
@@ -343,6 +432,37 @@ export default function FormBuilder() {
         </Card>
       </div>
     </div>
+  );
+}
+
+function PageTab({
+  title,
+  active,
+  onSelect,
+  onRename,
+}: {
+  title: string;
+  active: boolean;
+  onSelect: () => void;
+  onRename: (title: string) => void;
+}) {
+  if (active) {
+    return (
+      <input
+        className="text-sm font-medium px-3 py-1.5 rounded-md bg-indigo-600 text-white w-32 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+        defaultValue={title}
+        key={title}
+        onBlur={(e) => onRename(e.target.value)}
+      />
+    );
+  }
+  return (
+    <button
+      onClick={onSelect}
+      className="text-sm font-medium px-3 py-1.5 rounded-md text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+    >
+      {title}
+    </button>
   );
 }
 

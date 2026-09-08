@@ -15,6 +15,7 @@ export interface FormField {
   label: string;
   required: boolean;
   options: string | null; // JSON-encoded string[]
+  page: number;
   x: number;
   y: number;
   width: number;
@@ -37,6 +38,7 @@ export interface FormDetail {
   title: string;
   description: string | null;
   published: boolean;
+  pageTitles: string; // JSON-encoded string[]
   createdBy: { id: number; name: string };
   fields: FormField[];
 }

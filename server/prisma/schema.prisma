@@ -41,6 +41,7 @@ model Form {
   createdById Int
   createdBy   User     @relation("FormCreatedBy", fields: [createdById], references: [id])
   published   Boolean  @default(false)
+  pageTitles  String   @default("[\"Page 1\"]") // JSON-encoded string[], one entry per page
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -50,7 +51,8 @@ model Form {
 }
 
 // Free-form canvas position/size in addition to field content, so the builder
-// can place fields anywhere rather than a fixed vertical list.
+// can place fields anywhere rather than a fixed vertical list. `page` is a
+// 0-indexed position into the form's pageTitles array.
 model FormField {
   id       Int       @id @default(autoincrement())
   formId   Int
@@ -59,6 +61,7 @@ model FormField {
   label    String
   required Boolean   @default(false)
   options  String? // JSON-encoded string[] for DROPDOWN/CHECKBOX choices
+  page     Int       @default(0)
   x        Float
   y        Float
   width    Float

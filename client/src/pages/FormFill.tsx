@@ -4,7 +4,18 @@ import { api, ApiError } from "../lib/api";
 import type { FormDetail } from "../lib/types";
 import { Button, Card, inputClass } from "../components/ui";
 
-const CANVAS_WIDTH = 900;
+// A4 at 96 CSS px/inch — matches the builder's page size.
+const CANVAS_WIDTH = 794;
+const CANVAS_HEIGHT = 1123;
+
+function parsePageTitles(json: string): string[] {
+  try {
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed) && parsed.length ? parsed : ["Page 1"];
+  } catch {
+    return ["Page 1"];
+  }
+}
 
 export default function FormFill() {
   const { id } = useParams();
@@ -12,6 +23,7 @@ export default function FormFill() {
 
   const [form, setForm] = useState<FormDetail | null>(null);
   const [values, setValues] = useState<Record<number, string>>({});
+  const [currentPage, setCurrentPage] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -19,6 +31,7 @@ export default function FormFill() {
   function load() {
     setSubmitted(false);
     setValues({});
+    setCurrentPage(0);
     api
       .get<FormDetail>(`/forms/${formId}`)
       .then(setForm)
@@ -53,7 +66,10 @@ export default function FormFill() {
     return <p className="text-sm text-slate-400">{error || "Loading..."}</p>;
   }
 
-  const height = Math.max(500, ...form.fields.map((f) => f.y + f.height)) + 40;
+  const pageTitles = parsePageTitles(form.pageTitles);
+  const pageFields = form.fields.filter((f) => f.page === currentPage);
+  const height = Math.max(CANVAS_HEIGHT, ...pageFields.map((f) => f.y + f.height + 40));
+  const isLastPage = currentPage === pageTitles.length - 1;
 
   return (
     <div>
@@ -61,7 +77,7 @@ export default function FormFill() {
         ← Back to forms
       </Link>
       <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-100 mt-1">{form.title}</h1>
-      {form.description && <p className="text-sm text-slate-500 mt-1 mb-4">{form.description}</p>}
+      {form.description && <p className="text-sm text-slate-500 mt-1">{form.description}</p>}
 
       {submitted ? (
         <Card className="p-8 text-center mt-4">
@@ -73,19 +89,41 @@ export default function FormFill() {
       ) : (
         <>
           {error && <p className="text-sm text-red-600 my-3">{error}</p>}
+
+          {pageTitles.length > 1 && (
+            <div className="flex items-center gap-2 mt-4 mb-1">
+              <p className="text-xs font-medium text-slate-400">
+                Page {currentPage + 1} of {pageTitles.length}
+              </p>
+              <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">— {pageTitles[currentPage]}</p>
+            </div>
+          )}
+
           <div
-            className="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl mt-4"
+            className="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-sm shadow-sm mt-2"
             style={{ width: CANVAS_WIDTH, height }}
           >
-            {form.fields.map((f) => (
+            {pageFields.map((f) => (
               <div key={f.id} className="absolute p-2.5" style={{ left: f.x, top: f.y, width: f.width, height: f.height }}>
                 <FieldInput field={f} value={values[f.id] ?? ""} onChange={(v) => setValue(f.id, v)} />
               </div>
             ))}
           </div>
-          <Button onClick={handleSubmit} disabled={submitting} className="mt-4">
-            {submitting ? "Submitting..." : "Submit"}
-          </Button>
+
+          <div className="flex items-center gap-2 mt-4">
+            {currentPage > 0 && (
+              <Button variant="secondary" onClick={() => setCurrentPage((p) => p - 1)}>
+                Back
+              </Button>
+            )}
+            {isLastPage ? (
+              <Button onClick={handleSubmit} disabled={submitting}>
+                {submitting ? "Submitting..." : "Submit"}
+              </Button>
+            ) : (
+              <Button onClick={() => setCurrentPage((p) => p + 1)}>Next</Button>
+            )}
+          </div>
         </>
       )}
     </div>
